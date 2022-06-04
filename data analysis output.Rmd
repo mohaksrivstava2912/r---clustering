@@ -1,0 +1,196 @@
+---
+title: "Data Analysis Ouput - XXXX Organization Clustering and Results"
+author: "Mohak Srivastava"
+date: "2/3/2021"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+## Introduction
+
+The objective of this exercise is to perform customer segmentation on the dataset provided by xxxx. An unsupervised algorithm was developed for the same.
+
+***(The data has been replaced with dummy values - which may have an effect on the inferences and quality of analysis. However, the document is more to demonstrate the process behind a data analytics process and not the outcome itself.)
+
+## Dataset preparation
+
+The dataset provided by xxxxx has details of 1491 transactions performed by 1067 individual customers. The dataset was converted from a transaction level dataset to a customer level dataset by creating the following variables:  
+1. Number of chits (a customer participated in)  
+2. Minimum chit amount  
+3. Average monthly installment  
+4. Maximum chit amount  
+5. Minimum completed installments  
+6. Maximum completed installments  
+7. Difference in installments (difference between oldest and newest installment)  
+8. Difference in amount (difference between maximum and minimum chit amount)  
+  
+Hence, the final dataset to be used for analysis has 1067 observations and 9 features.
+\newpage
+
+## Data normalization and univariate analysis
+
+In order to perform clustering, the variables were first normalized (using the mean and standard deviation) before further analysis. In order to understand the variable distribution, the following graphs were plotted:
+```{r code approach 1 - importing and normalising dataset, echo=FALSE}
+library(readxl)
+library(tidyverse)
+library(dplyr)
+library(stringr)
+library(reshape2)
+library(ggplot2)
+library("NbClust")
+library("factoextra")
+library(clValid)
+
+IBG_Customers <- read_excel("data_analysis_input.xlsx")
+
+z = IBG_Customers[-c(1)]
+x = as.data.frame(z)
+means = apply(z,2,mean)
+sds = apply(z,2,sd)
+nor1 = scale(z,center=means,scale=sds)
+nor = as.data.frame(nor1)
+boxplot(nor1)
+melt.nor1 <- melt(as.data.frame(IBG_Customers))
+
+ggplot(data = melt.nor1, aes(x = value)) + 
+stat_density() + 
+facet_wrap(~variable, scales = "free")
+
+```
+\newpage
+
+## Outlier treatment
+
+The boxplot shows significant outliers in the dataset. Hence, an outlier treatment is necessary. A ceiling method will be used to identify and clean the datset. (A ceiling method implies that all values greater than 1.5 times the interquartile range will be reduced to the maximum permissible value)  
+  
+The number of outliers per variable can be seen in the table below:  
+
+```{r code approach 1 - outlier treatment, echo=FALSE}
+
+FindOutliers <- function(data) {
+  lowerq = quantile(data)[2]
+  upperq = quantile(data)[4]
+  iqr = upperq - lowerq 
+  extreme.threshold.upper = (iqr * 1.5) + upperq
+  extreme.threshold.lower = lowerq - (iqr * 1.5)
+  result <- which(data > extreme.threshold.upper | data < extreme.threshold.lower)
+  length(result)
+}
+
+apply(nor1, 2, FindOutliers)
+
+remove_outliers <- function(data, na.rm = TRUE, ...) {
+  lowerq = quantile(data)[2]
+  upperq = quantile(data)[4]
+  iqr = upperq - lowerq
+  upper_lim = (iqr * 1.5) + upperq
+  lower_lim = lowerq - (iqr * 1.5)
+  ifelse((data>upper_lim),upper_lim, ifelse((data<lower_lim),lower_lim, data))
+}
+data_clean = apply(nor1, 2, remove_outliers)
+```
+
+
+We can see the changes in the variable distribution after treating for outliers in the graph below:
+
+```{r code approach 1 - clean data visualization, echo=FALSE}
+boxplot(data_clean)
+data_clean <- data_clean[,-c(1,7,8)]
+
+data2 <- data.frame(IBG_Customers$`Row Labels`,data_clean)
+
+melt.nor2 <- melt(as.data.frame(data2))
+
+ggplot(data = melt.nor2, aes(x = value)) + 
+stat_density() + 
+facet_wrap(~variable, scales = "free")
+
+```
+  
+As expected, the treated data has a much more uniform distribution.
+
+\newpage
+## Cluster analysis
+
+After comparing various clustering methods, a hierarchical clustering method was considered the best for this problem statement. The most suitable number of clusters (based on wss scores) was found to be 4. The clusters and their results can be seen below
+```{r code approach 1 - performing clustering}
+dscale <- data_clean
+
+distance = dist(dscale, method = "euclidean")
+cluster.ward = hclust(distance, method="complete")
+
+res.coph.ward <- cophenetic(cluster.ward)
+grp <- cutree(cluster.ward, k = 4)
+
+fviz_dend(cluster.ward, k = 4, # Cut in four groups
+          cex = 0.5, # label size
+          k_colors = c("#2E9FDF", "#E7B800", "#FC4E07", "#00AFBB"),
+          color_labels_by_k = TRUE, # color labels by groups
+          rect = TRUE # Add rectangle around groups
+)
+
+
+
+fviz_cluster(list(data = data_clean, cluster = grp),
+             palette = c("#2E9FDF", "#E7B800", "#FC4E07","#00AFBB"),
+             ellipse.type = "convex", # Concentration ellipse
+             pointsize = 1,
+             labelsize = 5,
+             repel = FALSE, # Avoid label overplotting (slow)
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+
+
+table(grp)
+IBG_Customers$hcluster = cutree(cluster.ward, k=4)
+cluster_means = aggregate(IBG_Customers[,-c(1)],list(grp),mean)
+cluster_means
+```
+The clustering had a copenhatic score of `r cor(distance, res.coph.ward)`, which indicates a high inter cluster distance and low intra cluster distance. This means our clusters are clearly formed with minimum overlap. We will now understand the difference in transactional activities in each cluster. The results can be visualized in the graphs below:
+
+```{r code approach 1 - clustering results, echo =FALSE}
+IBG_Customers$hcluster <- as.factor(IBG_Customers$hcluster)
+
+attach(IBG_Customers)
+IBG_Customers %>%
+  ggplot(aes(x = hcluster, y = `Number of chits`, fill = hcluster))+
+  geom_boxplot(outlier.shape = NA)+
+  ggtitle("Number of chits")
+
+IBG_Customers %>%
+  ggplot(aes(x = hcluster, y = `Average Monthly Installment`, fill = hcluster))+
+  geom_boxplot(outlier.shape = NA)+ 
+  ggtitle("Average installment value")
+
+IBG_Customers %>%
+  ggplot(aes(x = hcluster, y = `Difference In Installments`, fill = hcluster))+
+  geom_boxplot()+
+  ggtitle("Difference in installments")
+
+IBG_Customers %>%
+  ggplot(aes(x = hcluster, y = `Difference In Amount`, fill = hcluster))+
+  geom_boxplot()+
+  ggtitle("Difference in amount")
+
+
+melt.nor3 <- melt(as.data.frame(IBG_Customers))
+
+ggplot(data = melt.nor3, aes(x = value, fill = hcluster)) + 
+stat_density() + 
+facet_wrap(~variable, scales = "free")
+
+##setwd("F:/Office ka backup/MicroSave/Fintech lab/MyPaisaa")
+```
+
+\newpage
+## Inferences from clustering
+
+1. 4 clusters formed using hierarchical clustering having minimum overlap 
+2. Clusters 1 and 2 have low chit participation and low average monthly installments. They can be labelled as customers with low activity.
+3. Cluster 3 has customers with highest number of average monthly installments. These could be customers participating in high value chits. 
+4. Cluster 4 has customers with high number of chits participation. These could be active customers participating in multiple financial products. 
+4.	Hence, cusomers with demographics similar to 3 and 4 could be used for a targeted marketing approach.
